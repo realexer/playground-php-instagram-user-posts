@@ -9,57 +9,101 @@
 namespace app\InstagramDataProvider\Clients\HTMLClient;
 
 use app\InstagramDataProvider\ClientInterface;
+use app\InstagramDataProvider\Clients\HTMLClient\http\CurlClient;
+use app\InstagramDataProvider\Clients\HTMLClient\http\Request;
+use app\InstagramDataProvider\Clients\HTMLClient\parsers\PostsRequestDataParser;
+use app\InstagramDataProvider\Data\PostImage;
+use app\InstagramDataProvider\Data\UserMedia;
 
 class Client implements ClientInterface
 {
     private $config = [
-        "url" => "https://instagram.com/"
+        "base_url" => "https://www.instagram.com/",
+        "query_id" => "17888483320059182"
     ];
+
     /**
      * @param string $username
      * @param int $amount
      * @return InstagramUserPost[]
+     * @throws \Exception
      */
     public function getRecentPosts(string $username, int $amount) : array
     {
+        $httpClient = new CurlClient();
+        $postsRequestData = $this->retrievePostsRequestData($username);
+
+        $postsRequestData->completenessCheck();
+
+        $data["query_id"] = $this->config['query_id'];
+        $data['variables'] = json_encode([
+            'id' => $postsRequestData->userId,
+            'first' => $amount,
+            //'after' => $postsRequestData->endCursor
+        ]);
+
+        $postsRequest = new Request();
+        $postsRequest->url = $this->config['base_url']."graphql/query/?".http_build_query($data);
+        $postsRequest->headers = [
+            'x-instagram-gis: '.md5($postsRequestData->rhx_gis.":".$data['variables'])
+        ];
+
+        $postsResponse = $httpClient->request($postsRequest);
+
+        return $this->retrievePostsFromResponse(json_decode($postsResponse->body, true));
+    }
+
+    /**
+     * @param $username
+     * @return \app\InstagramDataProvider\Clients\parsers\PostsRequestData
+     * @throws UserDataNotFoundException
+     */
+    private function retrievePostsRequestData($username)
+    {
+        $httpClient = new CurlClient();
+        $request = new Request();
+        $request->url = $this->config['base_url'].$username;
+        $response = $httpClient->request($request);
+
+        if($response->code == 200)
+        {
+            return PostsRequestDataParser::getPostsRequestData($response->body);
+        } else {
+            throw new UserDataNotFoundException("User data not found.");
+        }
+    }
+
+    private function retrievePostsFromResponse(array $data)
+    {
         $posts = [];
+        // TODO: add safe array lookups
+        if($data['status'] == 'ok') {
+            $userData = $data['data']['user']['edge_owner_to_timeline_media'];
 
-        $pageContent = $this->loadHTML($this->config['url'].$username);
+            foreach($userData['edges'] as $edge)
+            {
+                $post = new UserMedia();
+                $nodeData = $edge['node'];
+                $type = $nodeData["__typename"];
+                $post->likesAmount = $nodeData["edge_media_preview_like"]["count"];
+                $post->commentsAmount = $nodeData["edge_media_to_comment"]["count"];
 
-        $htmlDoc = $this->getDocument($pageContent);
+                $image = new PostImage();
+                $image->url = $nodeData["display_url"];
+                $image->height = $nodeData["dimensions"]["height"];
+                $image->width = $nodeData["dimensions"]["width"];
 
-        throw new Exception("Not implemented.");
-        //$posts = $this->queryDom($htmlDoc, "");
+                $post->imageVersions[] = $image;
+
+                $posts[] = $post;
+            }
+        }
 
         return $posts;
     }
+}
 
-    private function getDocument(string $content, $query)
-    {
-        $doc = new DOMDocument;
-        $doc->preserveWhiteSpace = false;
-        $doc->loadHTML($content);
+class UserDataNotFoundException extends \Exception
+{
 
-        return $doc;
-    }
-
-    private function queryDom($doc, $query)
-    {
-        $xpath = new DOMXPath($doc);
-
-        return $xpath->query($query);
-    }
-
-    private function loadHTML($url)
-    {
-        $curl = curl_init();
-        curl_setopt_array($curl, array(
-            CURLOPT_RETURNTRANSFER => 1,
-            CURLOPT_URL => $url,
-        ));
-
-        $result = curl_exec($curl);
-        curl_close($curl);
-        return $result;
-    }
 }

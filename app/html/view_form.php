@@ -7,6 +7,7 @@
  */
 ?>
 <form action="" method="POST">
-    <input type="text" name="username" placeholder="username or url">
+    <input type="text" name="username" value="<?= $username ?>" placeholder="username or url">
+    <input type="number" name="amount" value="<?= $amount ?>" placeholder="amount">
     <input type="submit"/>
 </form>
